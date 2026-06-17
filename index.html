@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HAR 文件在线分析 </title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    <style>
+        :root {
+            --bg: #f5f5f7;
+            --card: #ffffff;
+            --card-alt: #f0f0f2;
+            --text: #1d1d1f;
+            --sub: #86868b;
+            --border: #e5e5e7;
+            --primary: #6c63ff;
+            --primary-end: #5a52d5;
+            --success: #34c759;
+            --warning: #ff9500;
+            --danger: #ff3b30;
+            --radius: 16px;
+            --shadow: 0 2px 12px rgba(0,0,0,0.08);
+            --shadow-card: 0 1px 4px rgba(0,0,0,0.06);
+            --font-mono: 'SF Mono', Monaco, Consolas, monospace;
+        }
+        [data-theme="dark"] {
+            --bg: #1c1c1e;
+            --card: #2c2c2e;
+            --card-alt: #3a3a3c;
+            --text: #f5f5f7;
+            --sub: #98989d;
+            --border: #48484a;
+            --shadow: 0 2px 12px rgba(0,0,0,0.3);
+            --shadow-card: 0 1px 4px rgba(0,0,0,0.2);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            transition: background 0.2s, color 0.2s;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        .btn-primary:hover { filter: brightness(1.1); }
+        .btn-secondary {
+            background: var(--card-alt);
+            color: var(--text);
+        }
+        .btn-secondary:hover { filter: brightness(0.95); }
+        .card {
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-card);
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        
+        /* 拖拽区域 */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            border-radius: var(--radius);
+            padding: 60px 20px;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(108, 99, 255, 0.05);
+        }
+        .drop-zone-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .drop-zone-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .drop-zone-sub {
+            font-size: 14px;
+            color: var(--sub);
+        }
+        .drop-zone-sub code {
+            background: var(--card-alt);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+        .privacy {
+            margin-top: 16px;
+            font-size: 12px;
+            color: var(--sub);
+        }
+        
+        /* 信息栏 */
+        .info-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--card);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-card);
+            margin-bottom: 16px;
+        }
+        .info-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex: 1;
+            min-width: 0;
+        }
+        .info-icon { font-size: 20px; }
+        .info-name {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .info-stats {
+            font-size: 13px;
+            color: var(--sub);
+            white-space: nowrap;
+        }
+        .info-actions { display: flex; gap: 8px; }
+        
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        @media (max-width: 900px) {
+            .stats-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 500px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .stat-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: var(--sub);
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+        }
+        .stat-value.warn { color: var(--warning); }
+        .stat-value.danger { color: var(--danger); }
+        .stat-sub {
+            font-size: 11px;
+            color: var(--sub);
+            margin-top: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        /* 过滤栏 */
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .search-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px 14px;
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .search-input:focus { border-color: var(--primary); }
+        .chips { display: flex; gap: 6px; }
+        .chip {
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1.5px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .chip:hover { border-color: var(--primary); }
+        .chip.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .type-select {
+            padding: 8px 12px;
+            border: 1.5px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+            cursor: pointer;
+        }
+        .filter-count {
+            font-size: 13px;
+            color: var(--sub);
+            white-space: nowrap;
+        }
+        
+        /* 表格 */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+        }
+        th {
+            font-weight: 600;
+            color: var(--sub);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        th:hover { color: var(--text); }
+        tr { cursor: pointer; transition: background 0.1s; }
+        tr:hover { background: var(--card-alt); }
+        
+        .method {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 12px;
+            font-family: var(--font-mono);
+        }
+        .method-GET { background: #d4edda; color: #155724; }
+        .method-POST { background: #fff3cd; color: #856404; }
+        .method-PUT { background: #cce5ff; color: #004085; }
+        .method-DELETE { background: #f8d7da; color: #721c24; }
+        .method-PATCH { background: #e2d5f1; color: #563d7c; }
+        [data-theme="dark"] .method-GET { background: #1e4620; color: #7ddf64; }
+        [data-theme="dark"] .method-POST { background: #4a4216; color: #ffd966; }
+        [data-theme="dark"] .method-PUT { background: #1a3a5c; color: #6cb4ee; }
+        [data-theme="dark"] .method-DELETE { background: #4a1616; color: #ee6b6e; }
+        [data-theme="dark"] .method-PATCH { background: #3d2e5c; color: #b8a9d4; }
+        
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 12px;
+        }
+        .status-2xx { background: #d4edda; color: #155724; }
+        .status-3xx { background: #cce5ff; color: #004085; }
+        .status-4xx { background: #fff3cd; color: #856404; }
+        .status-5xx { background: #f8d7da; color: #721c24; }
+        [data-theme="dark"] .status-2xx { background: #1e4620; color: #7ddf64; }
+        [data-theme="dark"] .status-3xx { background: #1a3a5c; color: #6cb4ee; }
+        [data-theme="dark"] .status-4xx { background: #4a4216; color: #ffd966; }
+        [data-theme="dark"] .status-5xx { background: #4a1616; color: #ee6b6e; }
+        
+        .url-cell {
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .time-cell {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .time-bar {
+            flex: 1;
+            height: 6px;
+            background: var(--card-alt);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .time-bar-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        .time-bar-fill.slow { background: var(--warning); }
+        .time-bar-fill.very-slow { background: var(--danger); }
+        .time-text {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            white-space: nowrap;
+            min-width: 50px;
+            text-align: right;
+        }
+        
+        /* 详情弹窗 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        .modal {
+            background: var(--card);
+            border-radius: var(--radius);
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transform: translateY(20px);
+            transition: transform 0.2s;
+        }
+        .modal-overlay.active .modal { transform: translateY(0); }
+        .modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            gap: 12px;
+        }
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            word-break: break-all;
+            overflow-wrap: break-word;
+            flex: 1;
+            min-width: 0;
+            line-height: 1.4;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--sub);
+            padding: 4px;
+            flex-shrink: 0;
+        }
+        .modal-close:hover { color: var(--text); }
+        .modal-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            padding: 0 20px;
+        }
+        .modal-tab {
+            padding: 12px 16px;
+            border: none;
+            background: none;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--sub);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+        .modal-tab:hover { color: var(--text); }
+        .modal-tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .modal-tab-content { display: none; }
+        .modal-tab-content.active { display: block; }
+        
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 140px 1fr;
+            gap: 8px 12px;
+            font-size: 13px;
+        }
+        .detail-label {
+            color: var(--sub);
+            font-weight: 500;
+        }
+        .detail-value {
+            word-break: break-all;
+        }
+        .detail-value.mono {
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+        pre {
+            background: var(--card-alt);
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--sub);
+        }
+        
+        /* 主题切换 */
+        .theme-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: none;
+            background: var(--card);
+            font-size: 18px;
+            cursor: pointer;
+            box-shadow: var(--shadow-card);
+            transition: all 0.15s;
+        }
+        .theme-btn:hover { background: var(--card-alt); }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>📊 HAR 文件分析</h1>
+            <div class="header-actions">
+                <button class="theme-btn" id="themeToggle" title="切换主题">🌙</button>
+            </div>
+        </div>
+        
+        <!-- 拖拽区域 -->
+        <div class="card" id="dropCard">
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-zone-icon">🌐</div>
+                <div class="drop-zone-title">拖拽 HAR 文件到此处</div>
+                <div class="drop-zone-sub">
+                    支持 <code>.har</code> · <code>.json</code>（Chrome / Firefox / Safari DevTools 导出）
+                </div>
+                <div style="margin-top: 16px; display: flex; justify-content: center;">
+                    <button class="btn btn-primary" id="pickBtn">选择文件</button>
+                </div>
+                <div class="privacy">🔒 文件仅在浏览器本地解析，不上传任何服务器</div>
+            </div>
+            <input type="file" id="fileInput" accept=".har,.json" hidden>
+        </div>
+        
+        <!-- 信息栏 -->
+        <div class="info-bar hidden" id="infoBar">
+            <div class="info-left">
+                <span class="info-icon">🌐</span>
+                <span class="info-name" id="fileName"></span>
+                <span class="info-stats" id="fileStats"></span>
+            </div>
+            <div class="info-actions">
+                <button class="btn btn-secondary" id="sanitizeBtn" title="去掉敏感信息后导出">脱敏导出</button>
+                <button class="btn btn-secondary" id="closeBtn">关闭</button>
+            </div>
+        </div>
+        
+        <!-- 统计卡片 -->
+        <div class="stats-grid hidden" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-label">总请求</div>
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-sub" id="statTotalSub">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">总流量</div>
+                <div class="stat-value" id="statTraffic">0 B</div>
+                <div class="stat-sub">响应体大小累加</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">总耗时</div>
+                <div class="stat-value" id="statTime">0 ms</div>
+                <div class="stat-sub">所有请求耗时累加</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">最慢</div>
+                <div class="stat-value" id="statSlowest">0 ms</div>
+                <div class="stat-sub" id="statSlowestUrl">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">4xx</div>
+                <div class="stat-value" id="stat4xx">0</div>
+                <div class="stat-sub" id="stat4xxSub">无</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">5xx</div>
+                <div class="stat-value" id="stat5xx">0</div>
+                <div class="stat-sub" id="stat5xxSub">无</div>
+            </div>
+        </div>
+        
+        <!-- 过滤栏 -->
+        <div class="card hidden" id="filterCard">
+            <div class="filter-bar">
+                <input type="text" class="search-input" id="searchInput" placeholder="搜索 URL / 方法 / 主机…">
+                <div class="chips" id="statusChips">
+                    <button class="chip active" data-status="all">全部</button>
+                    <button class="chip" data-status="2xx">2xx</button>
+                    <button class="chip" data-status="3xx">3xx</button>
+                    <button class="chip" data-status="4xx">4xx</button>
+                    <button class="chip" data-status="5xx">5xx</button>
+                </div>
+                <select class="type-select" id="typeSelect">
+                    <option value="all">全部类型</option>
+                    <option value="xhr">xhr/fetch</option>
+                    <option value="document">document</option>
+                    <option value="script">script</option>
+                    <option value="stylesheet">stylesheet</option>
+                    <option value="image">image</option>
+                    <option value="font">font</option>
+                    <option value="other">other</option>
+                </select>
+                <span class="filter-count" id="filterCount">0 / 0 条</span>
+            </div>
+        </div>
+        
+        <!-- 请求表格 -->
+        <div class="card hidden" id="tableCard">
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>方法</th>
+                            <th>URL</th>
+                            <th>状态</th>
+                            <th>类型</th>
+                            <th>大小</th>
+                            <th>耗时</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+            <div class="empty-state hidden" id="emptyTip">没有匹配的请求</div>
+        </div>
+    </div>
+    
+    <!-- 详情弹窗 -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="modalTitle">请求详情</span>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="modal-tabs">
+                <button class="modal-tab active" data-tab="overview">概览</button>
+                <button class="modal-tab" data-tab="reqHeaders">请求头</button>
+                <button class="modal-tab" data-tab="resHeaders">响应头</button>
+                <button class="modal-tab" data-tab="reqBody">请求体</button>
+                <button class="modal-tab" data-tab="resBody">响应体</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-tab-content active" id="tab-overview"></div>
+                <div class="modal-tab-content" id="tab-reqHeaders"></div>
+                <div class="modal-tab-content" id="tab-resHeaders"></div>
+                <div class="modal-tab-content" id="tab-reqBody"></div>
+                <div class="modal-tab-content" id="tab-resBody"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 全局状态
+        let harData = null;
+        let entries = [];
+        let filteredEntries = [];
+        
+        // DOM 元素
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const pickBtn = document.getElementById('pickBtn');
+        const dropCard = document.getElementById('dropCard');
+        const infoBar = document.getElementById('infoBar');
+        const statsGrid = document.getElementById('statsGrid');
+        const filterCard = document.getElementById('filterCard');
+        const tableCard = document.getElementById('tableCard');
+        const tableBody = document.getElementById('tableBody');
+        const searchInput = document.getElementById('searchInput');
+        const statusChips = document.getElementById('statusChips');
+        const typeSelect = document.getElementById('typeSelect');
+        const filterCount = document.getElementById('filterCount');
+        const modalOverlay = document.getElementById('modalOverlay');
+        const themeToggle = document.getElementById('themeToggle');
+        
+        // 主题切换
+        themeToggle.addEventListener('click', () => {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            themeToggle.textContent = next === 'dark' ? '☀️' : '🌙';
+            localStorage.setItem('har-viewer-theme', next);
+        });
+        
+        // 初始化主题
+        const savedTheme = localStorage.getItem('har-viewer-theme') || 
+            (window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+        
+        // 拖拽事件
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) loadFile(file);
+        });
+        
+        // 点击选择
+        pickBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fileInput.click();
+        });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) loadFile(e.target.files[0]);
+        });
+        
+        // 加载文件
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    harData = JSON.parse(e.target.result);
+                    processHarData(file.name, file.size);
+                } catch (err) {
+                    alert('解析 HAR 文件失败：' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        // 处理 HAR 数据
+        function processHarData(fileName, fileSize) {
+            entries = harData.log?.entries || [];
+            
+            // 更新界面
+            dropCard.classList.add('hidden');
+            infoBar.classList.remove('hidden');
+            statsGrid.classList.remove('hidden');
+            filterCard.classList.remove('hidden');
+            tableCard.classList.remove('hidden');
+            
+            // 文件信息
+            document.getElementById('fileName').textContent = fileName;
+            const creator = harData.log?.creator || {};
+            document.getElementById('fileStats').textContent = 
+                `${entries.length} 条请求 · ${creator.name || 'Unknown'} ${creator.version || ''} · 文件 ${formatSize(fileSize)}`;
+            
+            // 统计
+            updateStats();
+            
+            // 渲染表格
+            filteredEntries = [...entries];
+            renderTable();
+        }
+        
+        // 更新统计
+        function updateStats() {
+            let totalSize = 0;
+            let totalTime = 0;
+            let slowest = 0;
+            let slowestUrl = '';
+            let count2xx = 0, count3xx = 0, count4xx = 0, count5xx = 0;
+            
+            entries.forEach(entry => {
+                const status = entry.response?.status || 0;
+                const time = entry.time || 0;
+                const size = entry.response?.content?.size || 0;
+                
+                totalSize += size;
+                totalTime += time;
+                
+                if (time > slowest) {
+                    slowest = time;
+                    slowestUrl = new URL(entry.request?.url || '').pathname;
+                }
+                
+                if (status >= 200 && status < 300) count2xx++;
+                else if (status >= 300 && status < 400) count3xx++;
+                else if (status >= 400 && status < 500) count4xx++;
+                else if (status >= 500) count5xx++;
+            });
+            
+            document.getElementById('statTotal').textContent = entries.length;
+            document.getElementById('statTotalSub').textContent = `成功 ${count2xx} · 失败 ${count4xx + count5xx}`;
+            document.getElementById('statTraffic').textContent = formatSize(totalSize);
+            document.getElementById('statTime').textContent = formatTime(totalTime);
+            document.getElementById('statSlowest').textContent = formatTime(slowest);
+            document.getElementById('statSlowestUrl').textContent = slowestUrl || '-';
+            document.getElementById('stat4xx').textContent = count4xx;
+            document.getElementById('stat4xxSub').textContent = count4xx > 0 ? `${count4xx} 个请求` : '无';
+            document.getElementById('stat5xx').textContent = count5xx;
+            document.getElementById('stat5xxSub').textContent = count5xx > 0 ? `${count5xx} 个请求` : '无';
+        }
+        
+        // 渲染表格
+        function renderTable() {
+            const search = searchInput.value.toLowerCase();
+            const statusFilter = statusChips.querySelector('.chip.active')?.dataset.status || 'all';
+            const typeFilter = typeSelect.value;
+            
+            filteredEntries = entries.filter(entry => {
+                const url = entry.request?.url || '';
+                const method = entry.request?.method || '';
+                const status = entry.response?.status || 0;
+                const type = entry._resourceType || 'other';
+                
+                // 搜索
+                if (search && !url.toLowerCase().includes(search) && 
+                    !method.toLowerCase().includes(search)) {
+                    return false;
+                }
+                
+                // 状态筛选
+                if (statusFilter !== 'all') {
+                    const group = Math.floor(status / 100) + 'xx';
+                    if (group !== statusFilter) return false;
+                }
+                
+                // 类型筛选
+                if (typeFilter !== 'all' && type !== typeFilter) return false;
+                
+                return true;
+            });
+            
+            // 计算最大耗时
+            const maxTime = Math.max(...filteredEntries.map(e => e.time || 0), 1);
+            
+            // 渲染
+            tableBody.innerHTML = filteredEntries.map((entry, idx) => {
+                const url = entry.request?.url || '';
+                const method = entry.request?.method || 'GET';
+                const status = entry.response?.status || 0;
+                const type = entry._resourceType || 'other';
+                const size = entry.response?.content?.size || 0;
+                const time = entry.time || 0;
+                const timePercent = (time / maxTime * 100).toFixed(1);
+                
+                const statusGroup = Math.floor(status / 100);
+                const statusClass = statusGroup >= 2 && statusGroup < 3 ? 'status-2xx' :
+                                   statusGroup >= 3 && statusGroup < 4 ? 'status-3xx' :
+                                   statusGroup >= 4 && statusGroup < 5 ? 'status-4xx' : 'status-5xx';
+                
+                const timeClass = time > 1000 ? 'very-slow' : time > 500 ? 'slow' : '';
+                
+                let pathname;
+                try { pathname = new URL(url).pathname; } catch { pathname = url; }
+                
+                return `<tr data-idx="${idx}">
+                    <td>${idx + 1}</td>
+                    <td><span class="method method-${method}">${method}</span></td>
+                    <td class="url-cell" title="${url}">${pathname}</td>
+                    <td><span class="status ${statusClass}">${status}</span></td>
+                    <td>${type}</td>
+                    <td>${formatSize(size)}</td>
+                    <td>
+                        <div class="time-cell">
+                            <div class="time-bar"><div class="time-bar-fill ${timeClass}" style="width:${timePercent}%"></div></div>
+                            <div class="time-text">${formatTime(time)}</div>
+                        </div>
+                    </td>
+                </tr>`;
+            }).join('');
+            
+            filterCount.textContent = `${filteredEntries.length} / ${entries.length} 条`;
+            document.getElementById('emptyTip').classList.toggle('hidden', filteredEntries.length > 0);
+        }
+        
+        // 筛选事件
+        searchInput.addEventListener('input', renderTable);
+        statusChips.addEventListener('click', (e) => {
+            if (e.target.classList.contains('chip')) {
+                statusChips.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                e.target.classList.add('active');
+                renderTable();
+            }
+        });
+        typeSelect.addEventListener('change', renderTable);
+        
+        // 表格点击
+        tableBody.addEventListener('click', (e) => {
+            const tr = e.target.closest('tr');
+            if (tr) {
+                const idx = parseInt(tr.dataset.idx);
+                showDetail(filteredEntries[idx]);
+            }
+        });
+        
+        // 显示详情
+        function showDetail(entry) {
+            if (!entry) return;
+            
+            const url = entry.request?.url || '';
+            const method = entry.request?.method || 'GET';
+            const status = entry.response?.status || 0;
+            const time = entry.time || 0;
+            
+            document.getElementById('modalTitle').textContent = `${method} ${status} - ${url}`;
+            
+            // 概览
+            document.getElementById('tab-overview').innerHTML = `
+                <div class="detail-grid">
+                    <div class="detail-label">请求方法</div>
+                    <div class="detail-value"><span class="method method-${method}">${method}</span></div>
+                    <div class="detail-label">URL</div>
+                    <div class="detail-value mono">${url}</div>
+                    <div class="detail-label">状态码</div>
+                    <div class="detail-value">${status} ${entry.response?.statusText || ''}</div>
+                    <div class="detail-label">耗时</div>
+                    <div class="detail-value">${formatTime(time)}</div>
+                    <div class="detail-label">资源类型</div>
+                    <div class="detail-value">${entry._resourceType || '-'}</div>
+                    <div class="detail-label">响应大小</div>
+                    <div class="detail-value">${formatSize(entry.response?.content?.size || 0)}</div>
+                    <div class="detail-label">MIME 类型</div>
+                    <div class="detail-value">${entry.response?.content?.mimeType || '-'}</div>
+                </div>`;
+            
+            // 请求头
+            const reqHeaders = entry.request?.headers || [];
+            document.getElementById('tab-reqHeaders').innerHTML = 
+                `<pre>${reqHeaders.map(h => `${h.name}: ${h.value}`).join('\n') || '无'}</pre>`;
+            
+            // 响应头
+            const resHeaders = entry.response?.headers || [];
+            document.getElementById('tab-resHeaders').innerHTML = 
+                `<pre>${resHeaders.map(h => `${h.name}: ${h.value}`).join('\n') || '无'}</pre>`;
+            
+            // 请求体
+            const reqBody = entry.request?.postData?.text || '';
+            document.getElementById('tab-reqBody').innerHTML = 
+                `<pre>${reqBody ? formatJson(reqBody) : '无'}</pre>`;
+            
+            // 响应体
+            const resBody = entry.response?.content?.text || '';
+            document.getElementById('tab-resBody').innerHTML = 
+                `<pre>${resBody ? formatJson(resBody) : '无'}</pre>`;
+            
+            // 显示弹窗
+            modalOverlay.classList.add('active');
+            
+            // 重置 tab
+            document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.modal-tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelector('.modal-tab[data-tab="overview"]').classList.add('active');
+            document.getElementById('tab-overview').classList.add('active');
+        }
+        
+        // Tab 切换
+        document.querySelector('.modal-tabs').addEventListener('click', (e) => {
+            const tab = e.target.closest('.modal-tab');
+            if (!tab) return;
+            
+            document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.modal-tab-content').forEach(t => t.classList.remove('active'));
+            
+            tab.classList.add('active');
+            document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        });
+        
+        // 关闭弹窗
+        document.getElementById('modalClose').addEventListener('click', () => {
+            modalOverlay.classList.remove('active');
+        });
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) modalOverlay.classList.remove('active');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') modalOverlay.classList.remove('active');
+        });
+        
+        // 关闭文件
+        document.getElementById('closeBtn').addEventListener('click', () => {
+            harData = null;
+            entries = [];
+            filteredEntries = [];
+            dropCard.classList.remove('hidden');
+            infoBar.classList.add('hidden');
+            statsGrid.classList.add('hidden');
+            filterCard.classList.add('hidden');
+            tableCard.classList.add('hidden');
+            fileInput.value = '';
+        });
+        
+        // 脱敏导出
+        document.getElementById('sanitizeBtn').addEventListener('click', () => {
+            if (!harData) return;
+            
+            const sanitized = JSON.parse(JSON.stringify(harData));
+            const sensitiveHeaders = ['authorization', 'cookie', 'set-cookie', 'x-api-key', 'x-auth-token'];
+            
+            sanitized.log.entries.forEach(entry => {
+                // 脱敏请求头
+                if (entry.request?.headers) {
+                    entry.request.headers = entry.request.headers.map(h => {
+                        if (sensitiveHeaders.includes(h.name.toLowerCase())) {
+                            return { ...h, value: '<redacted>' };
+                        }
+                        return h;
+                    });
+                }
+                // 脱敏响应头
+                if (entry.response?.headers) {
+                    entry.response.headers = entry.response.headers.map(h => {
+                        if (sensitiveHeaders.includes(h.name.toLowerCase())) {
+                            return { ...h, value: '<redacted>' };
+                        }
+                        return h;
+                    });
+                }
+                // 清除请求体和响应体
+                if (entry.request?.postData) {
+                    entry.request.postData.text = '<redacted>';
+                }
+                if (entry.response?.content) {
+                    entry.response.content.text = '<redacted>';
+                }
+            });
+            
+            // 下载
+            const blob = new Blob([JSON.stringify(sanitized, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'sanitized-' + (document.getElementById('fileName').textContent || 'har-file.har');
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+        
+        // 工具函数
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function formatTime(ms) {
+            if (ms === 0) return '0 ms';
+            if (ms < 1000) return Math.round(ms) + ' ms';
+            return (ms / 1000).toFixed(2) + ' s';
+        }
+        
+        function formatJson(str) {
+            try {
+                const obj = JSON.parse(str);
+                return JSON.stringify(obj, null, 2);
+            } catch {
+                return str;
+            }
+        }
+    </script>
+</body>
+</html>
